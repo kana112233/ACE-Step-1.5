@@ -34,6 +34,7 @@ TASK_VISIBILITY = {
         "repaint_params": False,
         "cover_params": False,
         "track_params": False,
+        "mixed_outputs": False,
     },
     "repaint": {
         "audio_codes": False,
@@ -42,6 +43,7 @@ TASK_VISIBILITY = {
         "repaint_params": True,
         "cover_params": False,
         "track_params": False,
+        "mixed_outputs": False,
     },
     "cover": {
         "audio_codes": False,
@@ -50,6 +52,7 @@ TASK_VISIBILITY = {
         "repaint_params": False,
         "cover_params": True,
         "track_params": False,
+        "mixed_outputs": False,
     },
     "add": {
         "audio_codes": False,
@@ -58,6 +61,7 @@ TASK_VISIBILITY = {
         "repaint_params": False,
         "cover_params": False,
         "track_params": True,
+        "mixed_outputs": True,
     },
     "complete": {
         "audio_codes": False,
@@ -66,6 +70,7 @@ TASK_VISIBILITY = {
         "repaint_params": False,
         "cover_params": False,
         "track_params": True,
+        "mixed_outputs": True,
     },
     "extract": {
         "audio_codes": False,
@@ -74,6 +79,7 @@ TASK_VISIBILITY = {
         "repaint_params": False,
         "cover_params": False,
         "track_params": False,
+        "mixed_outputs": False,
     },
 }
 
@@ -88,6 +94,7 @@ def update_task_visibility(task: str):
         gr.update(visible=vis["repaint_params"]),
         gr.update(visible=vis["cover_params"]),
         gr.update(visible=vis["track_params"]),
+        gr.update(visible=vis["mixed_outputs"]),
     )
 
 
@@ -548,6 +555,23 @@ def create_ui(handler):
                         "📤 Send Audio 2 to Studio",
                         variant="secondary"
                     )
+                    
+                    # Mixed Outputs Group (only for add/complete tasks)
+                    with gr.Group(visible=False) as mixed_outputs_group:
+                        gr.Markdown("#### Mixed Audio (Source + Generated)")
+                        source_audio_output = gr.Audio(
+                            label="Source Audio",
+                            type="filepath"
+                        )
+                        mixed_audio_1 = gr.Audio(
+                            label="Mixed Audio 1 (Source + Generated 1)",
+                            type="filepath"
+                        )
+                        mixed_audio_2 = gr.Audio(
+                            label="Mixed Audio 2 (Source + Generated 2)",
+                            type="filepath"
+                        )
+                    
                     actual_texts = gr.Textbox(
                         label="Actual Text Input",
                         interactive=False
@@ -638,6 +662,7 @@ def create_ui(handler):
                 repaint_params_group,
                 cover_params_group,
                 track_params_group,
+                mixed_outputs_group,
             ]
         )
         
@@ -690,7 +715,11 @@ def create_ui(handler):
                 ace_bpm, ace_key_scale, ace_time_signature, vocal_language,
                 use_adg, cfg_interval_start, cfg_interval_end, audio_format, use_tiled_decode
             ],
-            outputs=[audio_output_1, audio_output_2, audio_generation_status, actual_texts]
+            outputs=[
+                audio_output_1, audio_output_2,
+                source_audio_output, mixed_audio_1, mixed_audio_2,
+                audio_generation_status, actual_texts
+            ]
         )
         
         # -----------------------------------------------------------------
