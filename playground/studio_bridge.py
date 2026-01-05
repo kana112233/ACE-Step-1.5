@@ -73,13 +73,20 @@ window.StudioBridge = {
             if (!checkData.hasAudio) {
                 return { error: '❌ No audio in Studio clipboard' };
             }
-            // Return the clipboard data URL for Gradio to fetch
-            const audioUrl = this.BASE_URL + '/api/audio/clipboard/data';
-            return { 
-                url: audioUrl, 
-                message: '✅ Got audio from Studio (' + checkData.filename + ')',
-                // Include auth header info for fetching
+            // Actually fetch the audio data with authorization
+            const audioResp = await fetch(this.BASE_URL + '/api/audio/clipboard/data', {
+                method: 'GET',
                 headers: { 'Authorization': 'Bearer ' + this.token }
+            });
+            if (!audioResp.ok) {
+                return { error: '❌ Failed to get audio data: ' + audioResp.status };
+            }
+            // Convert to blob and create a blob URL that Gradio can use
+            const blob = await audioResp.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            return { 
+                url: blobUrl, 
+                message: '✅ Got audio from Studio (' + checkData.filename + ')'
             };
         } catch (e) {
             return { error: '❌ Error: ' + e.message };
