@@ -193,6 +193,13 @@ async (audioData) => {
     if (typeof audioData === 'object' && audioData.url) {
         audioUrl = audioData.url;
     }
+    // Transform URL: /gradio_api/file=/tmp/gradio/{hash}/{filename} -> /audio/{hash}/{filename}
+    // Example: http://143.198.44.56/gradio_api/file=/tmp/gradio/fcb907bdc91fb5e33c9e57f002afa6c5573932532173cddee397687fddd1749e/generated_0_3275725721.mp3
+    // becomes: http://143.198.44.56/audio/fcb907bdc91fb5e33c9e57f002afa6c5573932532173cddee397687fddd1749e/generated_0_3275725721.mp3
+    if (audioUrl && audioUrl.includes('/gradio_api/file=/tmp/gradio/')) {
+        audioUrl = audioUrl.replace(/\/gradio_api\/file=\/tmp\/gradio\//, '/audio/');
+    }
+    
     const result = await window.StudioBridge.sendAudio(audioUrl, 'ACEStep_Generated.mp3');
     // Return [original audio (unchanged), status message] to match outputs
     return [audioData, result];
