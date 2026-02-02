@@ -471,6 +471,7 @@ def _format_duration(seconds):
 
 def start_training(
     tensor_dir: str,
+    prior_tensor_dir: str,
     dit_handler,
     lora_rank: int,
     lora_alpha: int,
@@ -484,18 +485,22 @@ def start_training(
     training_seed: int,
     lora_output_dir: str,
     training_state: Dict,
+    prior_loss_weight: float = 1.0,
     progress=None,
 ):
     """Start LoRA training from preprocessed tensors.
-    
-    This is a generator function that yields progress updates.
+
+    Args:
+        tensor_dir: Target tensors directory
+        prior_tensor_dir: Prior tensors directory (empty = no prior preservation)
     """
     if not tensor_dir or not tensor_dir.strip():
         yield "❌ Please enter a tensor directory path", "", None, training_state
         return
-    
+
     tensor_dir = tensor_dir.strip()
-    
+    prior_tensor_dir = prior_tensor_dir.strip() if prior_tensor_dir else ""
+
     if not os.path.exists(tensor_dir):
         yield f"❌ Tensor directory not found: {tensor_dir}", "", None, training_state
         return
@@ -553,14 +558,30 @@ def start_training(
             dit_handler=dit_handler,
             lora_config=lora_config,
             training_config=training_config,
+            prior_loss_weight=prior_loss_weight,
         )
-        
+
         # Collect loss history
         step_list = []
         loss_list = []
-        
-        # Train with progress updates using preprocessed tensors
-        for step, loss, status in trainer.train_from_preprocessed(tensor_dir, training_state):
+
+        # Choose training method based on prior_tensor_dir
+        if prior_tensor_dir and os.path.exists(prior_tensor_dir):
+            # DreamBooth style: dual DataLoader
+            training_generator = trainer.train_with_prior_preservation(
+                target_tensor_dir=tensor_dir,
+                prior_tensor_dir=prior_tensor_dir,
+                training_state=training_state,
+            )
+        else:
+            # Standard training: single DataLoader
+            training_generator = trainer.train_from_preprocessed(
+                tensor_dir=tensor_dir,
+                training_state=training_state,
+            )
+
+        # Train with progress updates
+        for step, loss, status in training_generator:
             # Calculate elapsed time and ETA
             elapsed_seconds = time.time() - start_time
             time_info = f"⏱️ Elapsed: {_format_duration(elapsed_seconds)}"
@@ -674,7 +695,108 @@ def export_lora(
         shutil.copytree(source_path, export_path)
         
         return f"✅ LoRA exported to {export_path}"
-        
+
     except Exception as e:
         logger.exception("Export error")
         return f"❌ Export failed: {str(e)}"
+
+
+# ============================================================================
+# Prior Preservation Handlers
+# ============================================================================
+
+def generate_prior_samples(
+    dit_handler,
+    llm_handler,
+    builder_state,
+    num_samples: int,
+    output_dir: str,
+    progress=None,
+) -> str:
+    """Generate prior preservation samples using the original model.
+
+    Args:
+        dit_handler: DiT handler for audio generation
+        llm_handler: LLM handler for metadata
+        builder_state: Dataset builder state
+        num_samples: Number of prior samples to generate
+        output_dir: Directory to save generated audio
+        progress: Progress callback
+
+    Returns:
+        Status message
+    """
+    if builder_state is None:
+        return "❌ No dataset loaded. Please scan/load a dataset first."
+
+    if not builder_state.samples:
+        return "❌ No samples in dataset."
+
+    labeled_count = builder_state.get_labeled_count()
+    if labeled_count == 0:
+        return "❌ No labeled samples. Please auto-label first."
+
+    if dit_handler is None or dit_handler.model is None:
+        return "❌ Model not initialized."
+
+    def progress_callback(msg):
+        if progress:
+            try:
+                progress(msg)
+            except:
+                pass
+
+    paths, status = builder_state.generate_prior_samples(
+        dit_handler=dit_handler,
+        llm_handler=llm_handler,
+        output_dir=output_dir.strip(),
+        num_samples=int(num_samples),
+        progress_callback=progress_callback,
+    )
+
+    return status
+
+
+def preprocess_prior_samples(
+    dit_handler,
+    builder_state,
+    prior_audio_dir: str,
+    output_dir: str,
+    progress=None,
+) -> str:
+    """Preprocess prior audio samples to tensor files.
+
+    Args:
+        dit_handler: DiT handler
+        builder_state: Dataset builder state
+        prior_audio_dir: Directory containing prior audio files
+        output_dir: Directory to save preprocessed tensors
+        progress: Progress callback
+
+    Returns:
+        Status message
+    """
+    if builder_state is None:
+        return "❌ No dataset loaded."
+
+    if dit_handler is None or dit_handler.model is None:
+        return "❌ Model not initialized."
+
+    if not prior_audio_dir or not prior_audio_dir.strip():
+        return "❌ Please enter prior audio directory."
+
+    def progress_callback(msg):
+        if progress:
+            try:
+                progress(msg)
+            except:
+                pass
+
+    paths, status = builder_state.preprocess_prior_samples(
+        dit_handler=dit_handler,
+        prior_audio_dir=prior_audio_dir.strip(),
+        output_dir=output_dir.strip(),
+        progress_callback=progress_callback,
+    )
+
+    return status

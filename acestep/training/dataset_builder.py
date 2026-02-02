@@ -169,6 +169,8 @@ class DatasetMetadata:
         num_samples: Number of samples in the dataset
         all_instrumental: Whether all tracks are instrumental
         genre_ratio: Ratio of samples using genre vs caption (0=all caption, 100=all genre)
+        use_prior_preservation: Whether to use prior preservation regularization
+        prior_loss_weight: Weight for prior preservation loss (lambda)
     """
     name: str = "untitled_dataset"
     custom_tag: str = ""
@@ -177,6 +179,8 @@ class DatasetMetadata:
     num_samples: int = 0
     all_instrumental: bool = True
     genre_ratio: int = 0  # 0-100, percentage of samples using genre
+    use_prior_preservation: bool = False
+    prior_loss_weight: float = 1.0
 
     def __post_init__(self):
         if not self.created_at:
@@ -1099,5 +1103,308 @@ class DatasetBuilder:
         status = f"✅ Preprocessed {success_count}/{len(labeled_samples)} samples to {output_dir}"
         if fail_count > 0:
             status += f" ({fail_count} failed)"
-        
+
+        return output_paths, status
+
+    def generate_prior_samples(
+        self,
+        dit_handler,
+        llm_handler,
+        output_dir: str,
+        num_samples: int = None,
+        progress_callback=None,
+    ) -> Tuple[List[str], str]:
+        """Generate prior preservation samples using the original model.
+
+        These samples are generated WITHOUT the custom_tag, using only the base
+        caption/genre. They serve as regularization data to prevent the model
+        from forgetting its original behavior when the custom_tag is not present.
+
+        Args:
+            dit_handler: Initialized DiT handler for audio generation
+            llm_handler: Initialized LLM handler for metadata generation
+            output_dir: Directory to save generated audio files
+            num_samples: Number of prior samples to generate (default: same as dataset)
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Tuple of (list of generated audio paths, status message)
+        """
+        from acestep.inference import generate_music, GenerationParams, GenerationConfig
+
+        if not self.samples:
+            return [], "❌ No samples in dataset"
+
+        labeled_samples = [s for s in self.samples if s.labeled]
+        if not labeled_samples:
+            return [], "❌ No labeled samples to generate priors from"
+
+        if dit_handler is None or dit_handler.model is None:
+            return [], "❌ Model not initialized"
+
+        # Default: generate same number of prior samples as target samples
+        if num_samples is None:
+            num_samples = len(labeled_samples)
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        generated_paths = []
+        success_count = 0
+        fail_count = 0
+
+        for i in range(num_samples):
+            try:
+                # Use sample metadata but WITHOUT custom_tag
+                sample = labeled_samples[i % len(labeled_samples)]
+
+                if progress_callback:
+                    progress_callback(f"Generating prior {i+1}/{num_samples}")
+
+                # Get caption/genre WITHOUT custom_tag (base prompt only)
+                use_genre = (i % 100) < self.metadata.genre_ratio
+                if use_genre and sample.genre:
+                    base_prompt = sample.genre
+                else:
+                    base_prompt = sample.caption
+
+                # Generate audio using original model (no LoRA)
+                params = GenerationParams(
+                    task_type="text2music",
+                    caption=base_prompt,
+                    lyrics=sample.lyrics,
+                    instrumental=sample.is_instrumental,
+                    bpm=sample.bpm,
+                    keyscale=sample.keyscale,
+                    timesignature=sample.timesignature,
+                    vocal_language=sample.language,
+                    duration=min(sample.duration, 60) if sample.duration else 30,
+                    inference_steps=8,
+                    seed=42 + i,
+                    thinking=False,
+                )
+
+                config = GenerationConfig(
+                    batch_size=1,
+                    use_random_seed=False,
+                    audio_format="wav",
+                )
+
+                result = generate_music(
+                    dit_handler=dit_handler,
+                    llm_handler=llm_handler,
+                    params=params,
+                    config=config,
+                    save_dir=output_dir,
+                    progress=None,
+                )
+
+                if result.success and result.audios:
+                    audio_path = result.audios[0].get("path", "")
+                    if audio_path and os.path.exists(audio_path):
+                        generated_paths.append(audio_path)
+                        success_count += 1
+
+                        if progress_callback:
+                            progress_callback(f"✅ Generated prior {i+1}/{num_samples}")
+                    else:
+                        fail_count += 1
+                else:
+                    fail_count += 1
+                    if progress_callback:
+                        progress_callback(f"❌ Failed prior {i+1}: {result.error}")
+
+            except Exception as e:
+                logger.exception(f"Error generating prior sample {i+1}")
+                fail_count += 1
+                if progress_callback:
+                    progress_callback(f"❌ Error: {str(e)}")
+
+        status = f"✅ Generated {success_count}/{num_samples} prior samples"
+        if fail_count > 0:
+            status += f" ({fail_count} failed)"
+
+        return generated_paths, status
+
+    def preprocess_prior_samples(
+        self,
+        dit_handler,
+        prior_audio_dir: str,
+        output_dir: str,
+        progress_callback=None,
+    ) -> Tuple[List[str], str]:
+        """Preprocess prior preservation audio samples to tensor files.
+
+        These tensors are used for regularization during training. The caption
+        used is the base caption WITHOUT custom_tag.
+
+        Args:
+            dit_handler: Initialized DiT handler
+            prior_audio_dir: Directory containing generated prior audio files
+            output_dir: Directory to save preprocessed .pt files
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Tuple of (list of output paths, status message)
+        """
+        if dit_handler is None or dit_handler.model is None:
+            return [], "❌ Model not initialized"
+
+        if not os.path.exists(prior_audio_dir):
+            return [], f"❌ Prior audio directory not found: {prior_audio_dir}"
+
+        # Find all audio files in prior directory
+        audio_files = []
+        for f in os.listdir(prior_audio_dir):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in SUPPORTED_AUDIO_FORMATS:
+                audio_files.append(os.path.join(prior_audio_dir, f))
+
+        if not audio_files:
+            return [], f"❌ No audio files found in {prior_audio_dir}"
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Get model components
+        model = dit_handler.model
+        vae = dit_handler.vae
+        text_encoder = dit_handler.text_encoder
+        text_tokenizer = dit_handler.text_tokenizer
+        silence_latent = dit_handler.silence_latent
+        device = dit_handler.device
+        dtype = dit_handler.dtype
+        target_sample_rate = 48000
+
+        output_paths = []
+        success_count = 0
+        fail_count = 0
+
+        labeled_samples = [s for s in self.samples if s.labeled]
+
+        for i, audio_path in enumerate(audio_files):
+            try:
+                if progress_callback:
+                    progress_callback(f"Preprocessing prior {i+1}/{len(audio_files)}")
+
+                # Get corresponding sample for caption (cycle through)
+                sample = labeled_samples[i % len(labeled_samples)]
+
+                # Use base caption WITHOUT custom_tag
+                use_genre = (i % 100) < self.metadata.genre_ratio
+                if use_genre and sample.genre:
+                    base_caption = sample.genre
+                else:
+                    base_caption = sample.caption
+
+                # Load and preprocess audio
+                audio, sr = torchaudio.load(audio_path)
+
+                if sr != target_sample_rate:
+                    resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
+                    audio = resampler(audio)
+
+                if audio.shape[0] == 1:
+                    audio = audio.repeat(2, 1)
+                elif audio.shape[0] > 2:
+                    audio = audio[:2, :]
+
+                audio = audio.unsqueeze(0).to(device).to(vae.dtype)
+
+                # VAE encode
+                with torch.no_grad():
+                    latent = vae.encode(audio).latent_dist.sample()
+                    target_latents = latent.transpose(1, 2).to(dtype)
+
+                latent_length = target_latents.shape[1]
+                attention_mask = torch.ones(1, latent_length, device=device, dtype=dtype)
+
+                # Encode caption (WITHOUT custom_tag)
+                text_inputs = text_tokenizer(
+                    base_caption,
+                    padding="max_length",
+                    max_length=256,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                text_input_ids = text_inputs.input_ids.to(device)
+                text_attention_mask = text_inputs.attention_mask.to(device).to(dtype)
+
+                with torch.no_grad():
+                    text_outputs = text_encoder(text_input_ids)
+                    text_hidden_states = text_outputs.last_hidden_state.to(dtype)
+
+                # Encode lyrics
+                lyrics = sample.lyrics if sample.lyrics else "[Instrumental]"
+                lyric_inputs = text_tokenizer(
+                    lyrics,
+                    padding="max_length",
+                    max_length=512,
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                lyric_input_ids = lyric_inputs.input_ids.to(device)
+                lyric_attention_mask = lyric_inputs.attention_mask.to(device).to(dtype)
+
+                with torch.no_grad():
+                    lyric_hidden_states = text_encoder.embed_tokens(lyric_input_ids).to(dtype)
+
+                # Refer audio placeholder
+                refer_audio_hidden = torch.zeros(1, 1, 64, device=device, dtype=dtype)
+                refer_audio_order_mask = torch.zeros(1, device=device, dtype=torch.long)
+
+                # Run encoder
+                with torch.no_grad():
+                    encoder_hidden_states, encoder_attention_mask = model.encoder(
+                        text_hidden_states=text_hidden_states,
+                        text_attention_mask=text_attention_mask,
+                        lyric_hidden_states=lyric_hidden_states,
+                        lyric_attention_mask=lyric_attention_mask,
+                        refer_audio_acoustic_hidden_states_packed=refer_audio_hidden,
+                        refer_audio_order_mask=refer_audio_order_mask,
+                    )
+
+                # Build context_latents
+                src_latents = silence_latent[:, :latent_length, :].to(dtype)
+                if src_latents.shape[0] < 1:
+                    src_latents = src_latents.expand(1, -1, -1)
+
+                if src_latents.shape[1] < latent_length:
+                    pad_len = latent_length - src_latents.shape[1]
+                    src_latents = torch.cat([
+                        src_latents,
+                        silence_latent[:, :pad_len, :].expand(1, -1, -1).to(dtype)
+                    ], dim=1)
+                elif src_latents.shape[1] > latent_length:
+                    src_latents = src_latents[:, :latent_length, :]
+
+                chunk_masks = torch.ones(1, latent_length, 64, device=device, dtype=dtype)
+                context_latents = torch.cat([src_latents, chunk_masks], dim=-1)
+
+                # Save with is_prior=True flag
+                output_data = {
+                    "target_latents": target_latents.squeeze(0).cpu(),
+                    "attention_mask": attention_mask.squeeze(0).cpu(),
+                    "encoder_hidden_states": encoder_hidden_states.squeeze(0).cpu(),
+                    "encoder_attention_mask": encoder_attention_mask.squeeze(0).cpu(),
+                    "context_latents": context_latents.squeeze(0).cpu(),
+                    "is_prior": True,  # Mark as prior sample
+                    "metadata": {
+                        "audio_path": audio_path,
+                        "caption": base_caption,
+                        "is_prior": True,
+                    }
+                }
+
+                output_path = os.path.join(output_dir, f"prior_{i:04d}.pt")
+                torch.save(output_data, output_path)
+                output_paths.append(output_path)
+                success_count += 1
+
+            except Exception as e:
+                logger.exception(f"Error preprocessing prior {audio_path}")
+                fail_count += 1
+
+        status = f"✅ Preprocessed {success_count}/{len(audio_files)} prior samples"
+        if fail_count > 0:
+            status += f" ({fail_count} failed)"
+
         return output_paths, status

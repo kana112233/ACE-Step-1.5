@@ -1124,20 +1124,21 @@ def setup_training_event_handlers(demo, dit_handler, llm_handler, training_secti
     )
     
     # Start training from preprocessed tensors
-    def training_wrapper(tensor_dir, r, a, d, lr, ep, bs, ga, se, sh, sd, od, ts):
+    def training_wrapper(tensor_dir, prior_dir, r, a, d, lr, ep, bs, ga, se, sh, sd, od, ts, plw):
         try:
             for progress, log, plot, state in train_h.start_training(
-                tensor_dir, dit_handler, r, a, d, lr, ep, bs, ga, se, sh, sd, od, ts
+                tensor_dir, prior_dir, dit_handler, r, a, d, lr, ep, bs, ga, se, sh, sd, od, ts, plw
             ):
                 yield progress, log, plot, state
         except Exception as e:
             logger.exception("Training wrapper error")
             yield f"❌ Error: {str(e)}", str(e), None, ts
-    
+
     training_section["start_training_btn"].click(
         fn=training_wrapper,
         inputs=[
             training_section["training_tensor_dir"],
+            training_section["training_prior_tensor_dir"],
             training_section["lora_rank"],
             training_section["lora_alpha"],
             training_section["lora_dropout"],
@@ -1150,6 +1151,7 @@ def setup_training_event_handlers(demo, dit_handler, llm_handler, training_secti
             training_section["training_seed"],
             training_section["lora_output_dir"],
             training_section["training_state"],
+            training_section["prior_loss_weight"],
         ],
         outputs=[
             training_section["training_progress"],
@@ -1177,4 +1179,32 @@ def setup_training_event_handlers(demo, dit_handler, llm_handler, training_secti
             training_section["lora_output_dir"],
         ],
         outputs=[training_section["export_status"]]
+    )
+
+    # ========== Prior Preservation Handlers ==========
+
+    # Generate prior samples
+    training_section["generate_prior_btn"].click(
+        fn=lambda state, num, out_dir: train_h.generate_prior_samples(
+            dit_handler, llm_handler, state, num, out_dir
+        ),
+        inputs=[
+            training_section["dataset_builder_state"],
+            training_section["prior_num_samples"],
+            training_section["prior_output_dir"],
+        ],
+        outputs=[training_section["prior_generation_progress"]]
+    )
+
+    # Preprocess prior samples
+    training_section["preprocess_prior_btn"].click(
+        fn=lambda state, audio_dir, out_dir: train_h.preprocess_prior_samples(
+            dit_handler, state, audio_dir, out_dir
+        ),
+        inputs=[
+            training_section["dataset_builder_state"],
+            training_section["prior_output_dir"],
+            training_section["prior_tensor_output_dir"],
+        ],
+        outputs=[training_section["prior_preprocess_progress"]]
     )

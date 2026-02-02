@@ -350,27 +350,114 @@ def create_training_section(dit_handler, llm_handler, init_params=None) -> dict:
                     interactive=False,
                     lines=3,
                 )
+
+                gr.HTML("<hr><h3>🎯 Step 5.5: Prior Preservation (Optional)</h3>")
+
+                gr.Markdown("""
+                **Prior Preservation helps the Custom Activation Tag work correctly.**
+
+                Without this, the LoRA effect applies regardless of whether you use the tag.
+                With prior preservation, the model learns:
+                - **With tag**: Apply the LoRA style
+                - **Without tag**: Keep original behavior
+
+                This step generates audio samples using the original model (without custom tag),
+                then preprocesses them as regularization data.
+                """)
+
+                with gr.Row():
+                    use_prior_preservation = gr.Checkbox(
+                        label="Enable Prior Preservation",
+                        value=False,
+                        info="Generate regularization samples to make custom tag work",
+                    )
+                    prior_loss_weight = gr.Slider(
+                        minimum=0.1,
+                        maximum=2.0,
+                        step=0.1,
+                        value=1.0,
+                        label="Prior Loss Weight (λ)",
+                        info="Weight for regularization loss (1.0 recommended)",
+                    )
+
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        prior_num_samples = gr.Slider(
+                            minimum=1,
+                            maximum=100,
+                            step=1,
+                            value=10,
+                            label="Number of Prior Samples",
+                            info="More samples = better regularization but longer generation",
+                        )
+                    with gr.Column(scale=2):
+                        prior_output_dir = gr.Textbox(
+                            label="Prior Audio Output Directory",
+                            value="./datasets/prior_audio",
+                            placeholder="./datasets/prior_audio",
+                            info="Directory to save generated prior audio files",
+                        )
+                    with gr.Column(scale=1):
+                        generate_prior_btn = gr.Button(
+                            "🎵 Generate Priors",
+                            variant="secondary",
+                            size="lg",
+                        )
+
+                prior_generation_progress = gr.Textbox(
+                    label="Prior Generation Progress",
+                    interactive=False,
+                    lines=2,
+                )
+
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        prior_tensor_output_dir = gr.Textbox(
+                            label="Prior Tensor Output Directory",
+                            value="./datasets/prior_tensors",
+                            placeholder="./datasets/prior_tensors",
+                            info="Separate directory for prior tensors (DreamBooth style)",
+                        )
+                    with gr.Column(scale=1):
+                        preprocess_prior_btn = gr.Button(
+                            "⚡ Preprocess Priors",
+                            variant="secondary",
+                            size="lg",
+                        )
+
+                prior_preprocess_progress = gr.Textbox(
+                    label="Prior Preprocessing Progress",
+                    interactive=False,
+                    lines=2,
+                )
             
             # ==================== Training Tab ====================
             with gr.Tab("🚀 Train LoRA"):
                 with gr.Row():
                     with gr.Column(scale=2):
                         gr.HTML("<h3>📊 Preprocessed Dataset Selection</h3>")
-                        
+
                         gr.Markdown("""
                         Select the directory containing preprocessed tensor files (`.pt` files).
                         These are created in the "Dataset Builder" tab using the "Preprocess" button.
                         """)
-                        
+
                         training_tensor_dir = gr.Textbox(
-                            label="Preprocessed Tensors Directory",
+                            label="Target Tensors Directory",
                             placeholder="./datasets/preprocessed_tensors",
                             value="./datasets/preprocessed_tensors",
-                            info="Directory containing preprocessed .pt tensor files",
+                            info="Directory containing target .pt files (with custom_tag)",
                         )
-                        
+
+                        training_prior_tensor_dir = gr.Textbox(
+                            label="Prior Tensors Directory (Optional)",
+                            placeholder="./datasets/prior_tensors",
+                            value="",
+                            info="For Prior Preservation: directory with prior .pt files",
+                        )
+
                         load_dataset_btn = gr.Button("📂 Load Dataset", variant="secondary")
-                        
+
                         training_dataset_info = gr.Textbox(
                             label="Dataset Info",
                             interactive=False,
@@ -578,8 +665,19 @@ def create_training_section(dit_handler, llm_handler, init_params=None) -> dict:
         "preprocess_btn": preprocess_btn,
         "preprocess_progress": preprocess_progress,
         "dataset_builder_state": dataset_builder_state,
+        # Prior Preservation
+        "use_prior_preservation": use_prior_preservation,
+        "prior_loss_weight": prior_loss_weight,
+        "prior_num_samples": prior_num_samples,
+        "prior_output_dir": prior_output_dir,
+        "generate_prior_btn": generate_prior_btn,
+        "prior_generation_progress": prior_generation_progress,
+        "prior_tensor_output_dir": prior_tensor_output_dir,
+        "preprocess_prior_btn": preprocess_prior_btn,
+        "prior_preprocess_progress": prior_preprocess_progress,
         # Training
         "training_tensor_dir": training_tensor_dir,
+        "training_prior_tensor_dir": training_prior_tensor_dir,
         "load_dataset_btn": load_dataset_btn,
         "training_dataset_info": training_dataset_info,
         "lora_rank": lora_rank,

@@ -77,19 +77,20 @@ class PreprocessedTensorDataset(Dataset):
     
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """Load a preprocessed tensor file.
-        
+
         Returns:
             Dictionary containing all pre-computed tensors for training
         """
         tensor_path = self.valid_paths[idx]
         data = torch.load(tensor_path, map_location='cpu')
-        
+
         return {
             "target_latents": data["target_latents"],  # [T, 64]
             "attention_mask": data["attention_mask"],  # [T]
             "encoder_hidden_states": data["encoder_hidden_states"],  # [L, D]
             "encoder_attention_mask": data["encoder_attention_mask"],  # [L]
             "context_latents": data["context_latents"],  # [T, 65]
+            "is_prior": data.get("is_prior", False),  # Prior preservation flag
             "metadata": data.get("metadata", {}),
         }
 
@@ -158,6 +159,7 @@ def collate_preprocessed_batch(batch: List[Dict]) -> Dict[str, torch.Tensor]:
         "encoder_hidden_states": torch.stack(encoder_hidden_states),  # [B, L, D]
         "encoder_attention_mask": torch.stack(encoder_attention_masks),  # [B, L]
         "context_latents": torch.stack(context_latents),  # [B, T, 65]
+        "is_prior": torch.tensor([s.get("is_prior", False) for s in batch]),  # [B]
         "metadata": [s["metadata"] for s in batch],
     }
 
@@ -241,6 +243,80 @@ class PreprocessedDataModule(LightningDataModule if LIGHTNING_AVAILABLE else obj
             pin_memory=self.pin_memory,
             collate_fn=collate_preprocessed_batch,
         )
+
+
+class PriorPreservationDataModule(LightningDataModule if LIGHTNING_AVAILABLE else object):
+    """DataModule for Prior Preservation training (DreamBooth style).
+
+    Uses separate DataLoaders for target and prior samples,
+    following the standard DreamBooth implementation.
+    """
+
+    def __init__(
+        self,
+        target_tensor_dir: str,
+        prior_tensor_dir: str,
+        batch_size: int = 1,
+        num_workers: int = 4,
+        pin_memory: bool = True,
+    ):
+        """Initialize the data module.
+
+        Args:
+            target_tensor_dir: Directory containing target .pt files (with custom_tag)
+            prior_tensor_dir: Directory containing prior .pt files (without custom_tag)
+            batch_size: Training batch size (applied to both loaders)
+            num_workers: Number of data loading workers
+            pin_memory: Whether to pin memory for faster GPU transfer
+        """
+        if LIGHTNING_AVAILABLE:
+            super().__init__()
+
+        self.target_tensor_dir = target_tensor_dir
+        self.prior_tensor_dir = prior_tensor_dir
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+        self.target_dataset = None
+        self.prior_dataset = None
+
+    def setup(self, stage: Optional[str] = None):
+        """Setup datasets."""
+        if stage == 'fit' or stage is None:
+            self.target_dataset = PreprocessedTensorDataset(self.target_tensor_dir)
+            self.prior_dataset = PreprocessedTensorDataset(self.prior_tensor_dir)
+
+            logger.info(f"Target samples: {len(self.target_dataset)}")
+            logger.info(f"Prior samples: {len(self.prior_dataset)}")
+
+    def target_dataloader(self) -> DataLoader:
+        """Create target (with custom_tag) dataloader."""
+        return DataLoader(
+            self.target_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            collate_fn=collate_preprocessed_batch,
+            drop_last=True,
+        )
+
+    def prior_dataloader(self) -> DataLoader:
+        """Create prior (without custom_tag) dataloader."""
+        return DataLoader(
+            self.prior_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            collate_fn=collate_preprocessed_batch,
+            drop_last=True,
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        """For compatibility - returns target dataloader."""
+        return self.target_dataloader()
 
 
 # ============================================================================
