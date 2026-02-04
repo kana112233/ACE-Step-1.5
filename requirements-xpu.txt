@@ -1,4 +1,4 @@
-# PyTorch with CUDA 12.8 (for Windows/Linux)
+# PyTorch with Intel XPU/GPU support (for Windows/Linux)
 --extra-index-url https://download.pytorch.org/whl/xpu
 torch; sys_platform == 'win32'
 torchaudio; sys_platform == 'win32'
