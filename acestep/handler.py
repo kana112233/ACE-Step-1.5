@@ -727,25 +727,25 @@ class AceStepHandler:
     
     def _parse_audio_code_string(self, code_str: str) -> List[int]:
         """Extract integer audio codes from prompt tokens like <|audio_code_123|>.
-        Clamps code values to valid range (0-63999) to prevent quantizer index errors.
+        Code values are clamped to valid range [0, 63999] (codebook size = 64000).
         """
         if not code_str:
             return []
         try:
-            from acestep.constants import MAX_AUDIO_CODE
-            code_values = [int(x) for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str)]
-            # Clamp code values to valid range (0-63999)
-            clamped_codes = []
-            for code in code_values:
-                if code < 0:
-                    logger.warning(f"[_parse_audio_code_string] Clamping negative audio code {code} to 0")
-                    clamped_codes.append(0)
-                elif code > MAX_AUDIO_CODE:
-                    logger.warning(f"[_parse_audio_code_string] Clamping audio code {code} to {MAX_AUDIO_CODE} (max valid code)")
-                    clamped_codes.append(MAX_AUDIO_CODE)
-                else:
-                    clamped_codes.append(code)
-            return clamped_codes
+            MAX_AUDIO_CODE = 63999  # Maximum valid audio code value (codebook size = 64000)
+            codes = []
+            clamped_count = 0
+            for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str):
+                code_value = int(x)
+                # Clamp code value to valid range [0, MAX_AUDIO_CODE]
+                clamped_value = max(0, min(code_value, MAX_AUDIO_CODE))
+                if clamped_value != code_value:
+                    clamped_count += 1
+                    logger.warning(f"[_parse_audio_code_string] Clamped audio code value from {code_value} to {clamped_value}")
+                codes.append(clamped_value)
+            if clamped_count > 0:
+                logger.warning(f"[_parse_audio_code_string] Clamped {clamped_count} audio code value(s) to valid range [0, {MAX_AUDIO_CODE}]")
+            return codes
         except Exception as e:
             logger.debug(f"[_parse_audio_code_string] Failed to parse audio code string: {e}")
             return []
@@ -753,7 +753,9 @@ class AceStepHandler:
     def _decode_audio_codes_to_latents(self, code_str: str) -> Optional[torch.Tensor]:
         """
         Convert serialized audio code string into 25Hz latents using model quantizer/detokenizer.
-        Code values are clamped to valid range (0-63999) before being passed to quantizer.
+        
+        Note: Code values are already clamped to valid range [0, 63999] by _parse_audio_code_string(),
+        ensuring indices are within the quantizer's codebook size (64000).
         """
         if self.model is None or not hasattr(self.model, 'tokenizer') or not hasattr(self.model, 'detokenizer'):
             return None
@@ -763,16 +765,13 @@ class AceStepHandler:
             return None
         
         with self._load_model_context("model"):
-            from acestep.constants import MAX_AUDIO_CODE
             quantizer = self.model.tokenizer.quantizer
             detokenizer = self.model.detokenizer
             
             num_quantizers = getattr(quantizer, "num_quantizers", 1)
             # Create indices tensor: [T_5Hz]
-            # Ensure all code values are in valid range (clamp is already done in _parse_audio_code_string,
-            # but add extra safety check here)
-            code_ids_clamped = [max(0, min(code, MAX_AUDIO_CODE)) for code in code_ids]
-            indices = torch.tensor(code_ids_clamped, device=self.device, dtype=torch.long)  # [T_5Hz]
+            # Note: code_ids are already clamped to [0, 63999] by _parse_audio_code_string()
+            indices = torch.tensor(code_ids, device=self.device, dtype=torch.long)  # [T_5Hz]
             
             indices = indices.unsqueeze(0).unsqueeze(-1)  # [1, T_5Hz, 1]
             
