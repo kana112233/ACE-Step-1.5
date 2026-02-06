@@ -54,3 +54,83 @@ This is useful for:
 - Testing GPU tier configurations on high-end hardware
 - Verifying that warnings and limits work correctly for each tier
 - Developing and testing new GPU configuration parameters before submitting a PR
+
+## Troubleshooting
+
+### Flash Attention Issues
+
+**Problem:** GPU compatibility errors, crashes, or "CUDA error" messages during inference.
+
+**Symptoms:**
+- Application crashes when initializing models
+- Error messages mentioning "flash_attn" or "flash attention"
+- CUDA errors during generation
+
+**Solution:**
+
+1. **For Windows Portable Package Users:**
+   
+   Edit `start_gradio_ui.bat` and add this line in the "Service Configuration" section:
+   ```batch
+   set USE_FLASH_ATTENTION=--use_flash_attention false
+   ```
+   Save the file and restart the application.
+
+2. **For Command Line Users:**
+   
+   Launch with flash attention disabled:
+   ```bash
+   # Using uv
+   uv run acestep --use_flash_attention false
+   
+   # Using Python directly
+   python acestep/acestep_v15_pipeline.py --use_flash_attention false
+   ```
+
+3. **For Gradio UI Users (non-portable):**
+   
+   If the Service Configuration tab is visible:
+   - Uncheck the "Use Flash Attention" checkbox
+   - Click "Initialize Service"
+
+**Why this happens:**
+Flash Attention requires specific GPU architectures (Ampere or newer for NVIDIA) and may not be compatible with all GPUs. Disabling it will use the standard attention mechanism, which is slower but more compatible.
+
+### Service Configuration Tab Missing
+
+**Problem:** Cannot find the Service Configuration tab in the Gradio UI.
+
+**Cause:** The service was pre-initialized on startup (common in Windows Portable version).
+
+**Solutions:**
+
+1. **Configure via `start_gradio_ui.bat` (Windows Portable):**
+   
+   Edit the file and modify settings directly:
+   ```batch
+   set USE_FLASH_ATTENTION=--use_flash_attention false
+   set CONFIG_PATH=--config_path acestep-v15-turbo
+   set LM_MODEL_PATH=--lm_model_path acestep-5Hz-lm-0.6B
+   set OFFLOAD_TO_CPU=--offload_to_cpu true
+   ```
+
+2. **Disable auto-initialization to show the tab:**
+   
+   In `start_gradio_ui.bat`, comment out or remove:
+   ```batch
+   REM set INIT_SERVICE=--init_service true
+   ```
+   Or change to:
+   ```batch
+   set INIT_SERVICE=
+   ```
+   Then restart the application.
+
+3. **Launch without pre-initialization:**
+   ```bash
+   # Don't use --init_service flag
+   uv run acestep
+   ```
+
+See the [Service Configuration section in the Gradio Guide](./GRADIO_GUIDE.md#service-configuration) for more details.
+

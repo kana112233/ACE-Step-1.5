@@ -618,8 +618,11 @@ We provide multiple ways to use ACE-Step:
 | 🖥️ **Gradio Web UI** | Interactive web interface for music generation | [Gradio Guide](./docs/en/GRADIO_GUIDE.md) |
 | 🐍 **Python API** | Programmatic access for integration | [Inference API](./docs/en/INFERENCE.md) |
 | 🌐 **REST API** | HTTP-based async API for services | [REST API](./docs/en/API.md) |
+| 🔧 **GPU Compatibility** | GPU requirements and troubleshooting | [GPU Guide](./docs/en/GPU_COMPATIBILITY.md) |
 
 **📚 Documentation available in:** [English](./docs/en/) | [中文](./docs/zh/) | [日本語](./docs/ja/)
+
+**🆘 Troubleshooting:** See [GPU Compatibility Guide - Troubleshooting](./docs/en/GPU_COMPATIBILITY.md#troubleshooting) for common issues like Flash Attention errors or missing Service Configuration tab.
 
 ## 📖 Tutorial
 
