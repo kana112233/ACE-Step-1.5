@@ -79,7 +79,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=None, ge=1)
     stream: bool = Field(default=False, description="Enable streaming response")
     stop: Optional[Union[str, List[str]]] = Field(default=None)
-    seed: Optional[int] = Field(default=None)
+    seed: Optional[Union[int, str]] = Field(default=None, description="Seed(s) for reproducibility. Comma-separated for batch (e.g. '42,123,456')")
 
     # ACE-Step specific parameters (extended)
     thinking: Optional[bool] = Field(default=None, description="Use LM for audio code generation")
@@ -89,15 +89,10 @@ class ChatCompletionRequest(BaseModel):
 
     # ACE-Step direct fields (bypass message parsing / audio_config)
     lyrics: str = Field(default="", description="Direct lyrics input (bypass message parsing)")
-    sample_mode: bool = Field(default=False, description="Auto-generate caption/lyrics/metas via LM")
-    sample_query: str = Field(default="", description="Query/description for sample mode")
+    sample_mode: bool = Field(default=False, description="Auto-generate caption/lyrics/metas via LM; user message becomes the query")
     use_format: bool = Field(default=False, description="Use format_sample to enhance caption/lyrics")
     use_cot_caption: bool = Field(default=True, description="Use CoT for caption rewriting")
     use_cot_language: bool = Field(default=True, description="Use CoT for language detection")
-    vocal_language: str = Field(default="en", description="Vocal language code")
-    instrumental: bool = Field(default=False, description="Generate instrumental only")
-    duration: Optional[float] = Field(default=None, description="Target duration in seconds")
-    bpm: Optional[int] = Field(default=None, description="Beats per minute")
 
     # Task type
     task_type: str = Field(default="text2music", description="Task type: text2music, cover, repaint, extract, lego, complete")

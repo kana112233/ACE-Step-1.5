@@ -356,11 +356,8 @@ def _to_generate_music_request(
 
     audio_config = req.audio_config or AudioConfig()
 
-    # Resolve parameters: audio_config fields take priority, fallback to top-level fields
-    resolved_bpm = audio_config.bpm if audio_config.bpm is not None else req.bpm
-    resolved_duration = audio_config.duration if audio_config.duration is not None else req.duration
-    resolved_vocal_language = audio_config.vocal_language or req.vocal_language or "en"
-    resolved_instrumental = audio_config.instrumental if audio_config.instrumental is not None else req.instrumental
+    # Resolve parameters from audio_config only
+    resolved_instrumental = audio_config.instrumental if audio_config.instrumental is not None else False
 
     # If instrumental, set lyrics to [inst]
     resolved_lyrics = lyrics
@@ -371,7 +368,12 @@ def _to_generate_music_request(
 
     # Resolve sample_mode: explicit field takes priority, then auto-detect from messages
     resolved_sample_mode = req.sample_mode or bool(sample_query)
-    resolved_sample_query = req.sample_query or sample_query or ""
+    resolved_sample_query = sample_query or ""
+
+    # Resolve seed: pass through as-is (int or comma-separated string)
+    # handler.prepare_seeds() handles both formats
+    resolved_seed = req.seed if req.seed is not None else -1
+    use_random_seed = req.seed is None
 
     # Resolve task_type
     # Explicit task_type from request takes priority.
@@ -388,11 +390,11 @@ def _to_generate_music_request(
         sample_mode=resolved_sample_mode,
 
         # Music metadata
-        bpm=resolved_bpm,
+        bpm=audio_config.bpm,
         key_scale=audio_config.key_scale or "",
         time_signature=audio_config.time_signature or "",
-        audio_duration=resolved_duration if resolved_duration else None,
-        vocal_language=resolved_vocal_language,
+        audio_duration=audio_config.duration if audio_config.duration else None,
+        vocal_language=audio_config.vocal_language or "en",
 
         # LM parameters
         lm_temperature=req.temperature if req.temperature is not None else 0.85,
@@ -403,8 +405,8 @@ def _to_generate_music_request(
         # Generation parameters
         inference_steps=req.inference_steps if req.inference_steps is not None else 8,
         guidance_scale=req.guidance_scale if req.guidance_scale is not None else 7.0,
-        seed=req.seed if req.seed is not None else -1,
-        use_random_seed=req.seed is None,
+        seed=resolved_seed,
+        use_random_seed=use_random_seed,
         batch_size=req.batch_size if req.batch_size is not None else 1,
 
         # Task type
@@ -705,17 +707,25 @@ def create_openrouter_router(app_state_getter) -> APIRouter:
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid request format: {str(e)}")
 
-        # Parse messages
+        # Parse messages for text, audio, and system instruction
         prompt, lyrics, audio_paths, system_instruction, sample_query = _parse_messages(req.messages)
 
-        # Use direct lyrics field if provided and no lyrics from messages
-        if req.lyrics and not lyrics:
-            lyrics = req.lyrics
-            sample_query = None  # Don't use sample mode if direct lyrics given
-
-        # Use explicit sample_query from request if provided
-        if req.sample_query and not sample_query:
-            sample_query = req.sample_query
+        # When lyrics or sample_mode is explicitly provided, the message text role
+        # is already known — skip auto-detection results.
+        # _parse_messages may have put raw text into prompt or sample_query;
+        # recover it as raw_text for re-assignment.
+        if req.lyrics or req.sample_mode:
+            raw_text = prompt or sample_query or ""
+            if req.lyrics:
+                # lyrics provided → message text is the prompt
+                prompt = raw_text
+                lyrics = req.lyrics
+                sample_query = None
+            else:
+                # sample_mode → message text is the sample_query
+                prompt = ""
+                lyrics = ""
+                sample_query = raw_text
 
         if not prompt and not lyrics and not sample_query and not req.sample_mode and not audio_paths:
             raise HTTPException(

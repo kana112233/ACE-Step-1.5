@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 from loguru import logger
 
@@ -470,7 +470,7 @@ class GenerateMusicRequest(BaseModel):
     inference_steps: int = 8
     guidance_scale: float = 7.0
     use_random_seed: bool = True
-    seed: int = -1
+    seed: Union[int, str] = -1
 
     reference_audio_path: Optional[str] = None
     src_audio_path: Optional[str] = None
